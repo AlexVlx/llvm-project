@@ -1610,6 +1610,9 @@ static void convertFunctionAttributes(LLVMFuncOp func,
   if (FramePointerKindAttr fpAttr = func.getFramePointerAttr())
     llvmFunc->addFnAttr("frame-pointer", stringifyFramePointerKind(
                                              fpAttr.getFramePointerKind()));
+  if (UWTableKindAttr uwTableKindAttr = func.getUwtableKindAttr())
+    llvmFunc->setUWTableKind(
+        convertUWTableKindToLLVM(uwTableKindAttr.getUwtableKind()));
   convertFunctionMemoryAttributes(func, llvmFunc);
 }
 

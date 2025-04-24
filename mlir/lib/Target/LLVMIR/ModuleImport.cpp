@@ -525,18 +525,20 @@ LogicalResult ModuleImport::convertModuleFlagsMetadata() {
 
   SmallVector<Attribute> moduleFlags;
   for (const auto [behavior, key, val] : llvmModuleFlags) {
-    // Currently only supports most common: int constant values.
-    auto *constInt = llvm::mdconst::dyn_extract<llvm::ConstantInt>(val);
-    if (!constInt) {
+    Attribute valAttr = nullptr;
+    if (auto *constInt = llvm::mdconst::dyn_extract<llvm::ConstantInt>(val)) {
+      valAttr = builder.getI32IntegerAttr(constInt->getZExtValue());
+    } else if (auto *mdString = dyn_cast<llvm::MDString>(val)) {
+      valAttr = builder.getStringAttr(mdString->getString());
+    } else {
       emitWarning(mlirModule.getLoc())
-          << "unsupported module flag value: " << diagMD(val, llvmModule.get())
-          << ", only constant integer currently supported";
+          << "unsupported module flag value: " << diagMD(val, llvmModule.get());
       continue;
     }
 
     moduleFlags.push_back(builder.getAttr<ModuleFlagAttr>(
         convertModFlagBehaviorFromLLVM(behavior),
-        builder.getStringAttr(key->getString()), constInt->getZExtValue()));
+        builder.getStringAttr(key->getString()), valAttr));
   }
 
   if (!moduleFlags.empty())
@@ -1996,10 +1998,7 @@ LogicalResult ModuleImport::convertInstruction(llvm::Instruction *inst) {
       return failure();
 
     SmallVector<Block *> succBlocks;
-    // `succBlockArgs` is storage for the block arguments ranges used in
-    // `succBlockArgsRange`, so the later references live data.
     SmallVector<SmallVector<Value>> succBlockArgs;
-    SmallVector<ValueRange> succBlockArgsRange;
     for (auto i : llvm::seq<unsigned>(0, indBrInst->getNumSuccessors())) {
       llvm::BasicBlock *succ = indBrInst->getSuccessor(i);
       SmallVector<Value> blockArgs;
@@ -2007,8 +2006,9 @@ LogicalResult ModuleImport::convertInstruction(llvm::Instruction *inst) {
         return failure();
       succBlocks.push_back(lookupBlock(succ));
       succBlockArgs.push_back(blockArgs);
-      succBlockArgsRange.push_back(succBlockArgs.back());
     }
+    SmallVector<ValueRange> succBlockArgsRange =
+        llvm::to_vector_of<ValueRange>(succBlockArgs);
     Location loc = translateLoc(inst->getDebugLoc());
     auto indBrOp = builder.create<LLVM::IndirectBrOp>(
         loc, *basePtr, succBlockArgsRange, succBlocks);
@@ -2104,6 +2104,7 @@ static constexpr std::array kExplicitAttributes{
     StringLiteral("target-features"),
     StringLiteral("tune-cpu"),
     StringLiteral("unsafe-fp-math"),
+    StringLiteral("uwtable"),
     StringLiteral("vscale_range"),
     StringLiteral("willreturn"),
 };
@@ -2266,6 +2267,12 @@ void ModuleImport::processFunctionAttributes(llvm::Function *func,
   if (llvm::Attribute attr = func->getFnAttribute("fp-contract");
       attr.isStringAttribute())
     funcOp.setFpContractAttr(StringAttr::get(context, attr.getValueAsString()));
+
+  if (func->hasUWTable()) {
+    ::llvm::UWTableKind uwtableKind = func->getUWTableKind();
+    funcOp.setUwtableKindAttr(LLVM::UWTableKindAttr::get(
+        funcOp.getContext(), convertUWTableKindFromLLVM(uwtableKind)));
+  }
 }
 
 DictionaryAttr

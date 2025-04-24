@@ -53,7 +53,7 @@ define i32 @test_indirectbr_phi(ptr %address, ptr %a, ptr %b, i32 %v) {
 entry:
   ; CHECK:   %[[ONE:.*]] = llvm.mlir.constant(1 : i32) : i32
   ; CHECK:   %[[TWO:.*]] = llvm.mlir.constant(2 : i32) : i32
-  %dest = select i1 undef, ptr blockaddress(@test_indirectbr_phi, %end), ptr %address
+  %dest = select i1 poison, ptr blockaddress(@test_indirectbr_phi, %end), ptr %address
   ; CHECK:   llvm.indirectbr {{.*}} : !llvm.ptr, [
   ; CHECK:   ^[[HEAD_BB:.*]],
   ; CHECK:   ^[[TAIL_BB:.*]](%[[ONE]] : i32)
@@ -66,7 +66,7 @@ head:
   ; CHECK:   ^[[TAIL_BB]](%[[TWO]] : i32),
   ; CHECK:   ^[[END_BB:.*]]
   ; CHECK:   ]
-  %dest2 = select i1 undef, ptr blockaddress(@test_indirectbr_phi, %end), ptr %address
+  %dest2 = select i1 poison, ptr blockaddress(@test_indirectbr_phi, %end), ptr %address
   indirectbr ptr %dest2, [label %tail, label %end]
 
 tail:
