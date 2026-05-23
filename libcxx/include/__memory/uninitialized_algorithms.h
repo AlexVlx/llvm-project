@@ -32,7 +32,6 @@
 #include <__type_traits/is_trivially_assignable.h>
 #include <__type_traits/is_trivially_constructible.h>
 #include <__type_traits/is_trivially_relocatable.h>
-#include <__type_traits/is_unbounded_array.h>
 #include <__type_traits/remove_const.h>
 #include <__type_traits/remove_extent.h>
 #include <__utility/exception_guard.h>
@@ -487,7 +486,7 @@ inline const bool __allocator_has_trivial_copy_construct_v<allocator<_Type>, _Ty
 template <class _Alloc,
           class _In,
           class _Out,
-          __enable_if_t<is_trivially_copy_constructible<_In>::value && is_trivially_copy_assignable<_In>::value &&
+          __enable_if_t<is_trivially_copy_constructible<_In>::value && is_trivially_assignable<_Out&, _In&>::value &&
                             is_same<__remove_const_t<_In>, __remove_const_t<_Out> >::value &&
                             __allocator_has_trivial_copy_construct_v<_Alloc, _In>,
                         int> = 0>

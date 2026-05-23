@@ -21,6 +21,7 @@
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/Dialect/Support/FIRContext.h"
 #include "flang/Optimizer/Dialect/Support/KindMapping.h"
+#include "flang/Support/FPMaxminBehavior.h"
 #include "flang/Support/MathOptionsBase.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -39,6 +40,8 @@ class ExtendedValue;
 class MutableBoxValue;
 class BoxValue;
 
+/// Default alignment (in bytes) applied to array globals.
+constexpr unsigned defaultArrayGlobalAlignment = 64;
 /// Get the integer type with a pointer size.
 inline mlir::Type getIntPtrType(mlir::OpBuilder &builder) {
   // TODO: Delay the need of such type until codegen or find a way to use
@@ -208,6 +211,11 @@ public:
     return createRealConstant(loc, realType, 0u);
   }
 
+  /// Create a real constant of type \p realType with value one.
+  mlir::Value createRealOneConstant(mlir::Location loc, mlir::Type realType) {
+    return createRealConstant(loc, realType, 1u);
+  }
+
   /// Create a slot for a local on the stack. Besides the variable's type and
   /// shape, it may be given name, pinned, or target attributes.
   mlir::Value allocateLocal(mlir::Location loc, mlir::Type ty,
@@ -327,13 +335,15 @@ public:
                              mlir::StringAttr linkage = {},
                              mlir::Attribute value = {}, bool isConst = false,
                              bool isTarget = false,
-                             cuf::DataAttributeAttr dataAttr = {});
+                             cuf::DataAttributeAttr dataAttr = {},
+                             bool setDefaultAlignment = true);
 
   fir::GlobalOp createGlobal(mlir::Location loc, mlir::Type type,
                              llvm::StringRef name, bool isConst, bool isTarget,
                              std::function<void(FirOpBuilder &)> bodyBuilder,
                              mlir::StringAttr linkage = {},
-                             cuf::DataAttributeAttr dataAttr = {});
+                             cuf::DataAttributeAttr dataAttr = {},
+                             bool setDefaultAlignment = true);
 
   /// Create a global constant (read-only) value.
   fir::GlobalOp createGlobalConstant(mlir::Location loc, mlir::Type type,
@@ -571,7 +581,7 @@ public:
   /// Fortran 2018 9.5.3.3.2 section for more details.
   mlir::Value genExtentFromTriplet(mlir::Location loc, mlir::Value lb,
                                    mlir::Value ub, mlir::Value step,
-                                   mlir::Type type);
+                                   mlir::Type type, bool fold = false);
 
   /// Create an AbsentOp of \p argTy type and handle special cases, such as
   /// Character Procedure Tuple arguments.
@@ -626,6 +636,14 @@ public:
   /// Get current ComplexDivisionToRuntimeFlag value.
   bool getComplexDivisionToRuntimeFlag() const {
     return complexDivisionToRuntimeFlag;
+  }
+
+  /// Setter/getter for fpMaxminBehavior.
+  void setFPMaxminBehavior(Fortran::common::FPMaxminBehavior mode) {
+    fpMaxminBehavior = mode;
+  }
+  Fortran::common::FPMaxminBehavior getFPMaxminBehavior() const {
+    return fpMaxminBehavior;
   }
 
   /// Dump the current function. (debug)
@@ -687,6 +705,14 @@ private:
   /// FastMathFlags that need to be set for operations that support
   /// mlir::arith::FastMathAttr.
   mlir::arith::FastMathFlags fastMathFlags{};
+
+  /// Controls how max/min idioms should be implemented.
+  /// Right now, it is only used to propagate FPMaxminBehavior
+  /// to the IntrinsicCall lowering. In general, it can be used
+  /// for generating max/min idioms through FirBuilder anywhere
+  /// in the pipeline.
+  Fortran::common::FPMaxminBehavior fpMaxminBehavior{
+      Fortran::common::FPMaxminBehavior::Legacy};
 
   /// IntegerOverflowFlags that need to be set for operations that support
   /// mlir::arith::IntegerOverflowFlagsAttr.
@@ -820,7 +846,8 @@ void genScalarAssignment(fir::FirOpBuilder &builder, mlir::Location loc,
                          const fir::ExtendedValue &lhs,
                          const fir::ExtendedValue &rhs,
                          bool needFinalization = false,
-                         bool isTemporaryLHS = false);
+                         bool isTemporaryLHS = false,
+                         mlir::ArrayAttr accessGroups = {});
 
 /// Assign \p rhs to \p lhs. Both \p rhs and \p lhs must be scalar derived
 /// types. The assignment follows Fortran intrinsic assignment semantic for
@@ -854,6 +881,11 @@ mlir::Value genLenOfCharacter(fir::FirOpBuilder &builder, mlir::Location loc,
 /// for logical types).
 mlir::Value createZeroValue(fir::FirOpBuilder &builder, mlir::Location loc,
                             mlir::Type type);
+
+/// Create a one value of a given numerical or logical \p type (`true`
+/// for logical types).
+mlir::Value createOneValue(fir::FirOpBuilder &builder, mlir::Location loc,
+                           mlir::Type type);
 
 /// Get the integer constants of triplet and compute the extent.
 std::optional<std::int64_t> getExtentFromTriplet(mlir::Value lb, mlir::Value ub,

@@ -1,8 +1,8 @@
-ARG LLVM_VERSION=21.1.0
+ARG LLVM_VERSION=22.1.0
 # FIXME: Use "${LLVM_VERSION%%.*}" instead of "LLVM_VERSION_MAJOR" once we update runners to Ubuntu-26.04 with Buildah >= 1.37
-ARG LLVM_VERSION_MAJOR=21
+ARG LLVM_VERSION_MAJOR=22
 
-FROM docker.io/library/ubuntu:24.04 AS llvm-downloader
+FROM docker.io/library/ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS llvm-downloader
 ARG LLVM_VERSION
 ARG LLVM_VERSION_MAJOR
 
@@ -20,8 +20,9 @@ RUN apt-get update && \
     rm llvm.tar.xz
 
 
-FROM docker.io/library/ubuntu:24.04 AS base
+FROM docker.io/library/ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS base
 ENV LLVM_SYSROOT=/opt/llvm
+ENV PATH=${LLVM_SYSROOT}/bin:${PATH}
 
 # Need nodejs for some of the GitHub actions.
 # Need git for git-clang-format.
@@ -46,38 +47,16 @@ RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 # as root in 'ci-container-code-format' and 'ci-container-code-lint' containers
 
 
-FROM base AS ci-container-code-format
-ARG LLVM_VERSION
-
-COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-format \
-                            /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/git-clang-format \
-                            ${LLVM_SYSROOT}/bin/
-
-ENV PATH=${LLVM_SYSROOT}/bin:${PATH}
-
-# Install dependencies for 'pr-code-format.yml' job
-COPY llvm/utils/git/requirements_formatting.txt requirements_formatting.txt
-RUN pip install -r requirements_formatting.txt --break-system-packages && \
-    rm requirements_formatting.txt
-USER gha
-WORKDIR /home/gha
-
-
-FROM base AS ci-container-code-lint
+FROM base AS ci-container-build-tools
 ARG LLVM_VERSION
 ARG LLVM_VERSION_MAJOR
 
-COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-tidy \
-                            /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-${LLVM_VERSION_MAJOR} \
+COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-${LLVM_VERSION_MAJOR} \
                             ${LLVM_SYSROOT}/bin/
 COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/lib/clang/${LLVM_VERSION_MAJOR}/include \
                             ${LLVM_SYSROOT}/lib/clang/${LLVM_VERSION_MAJOR}/include
-COPY clang-tools-extra/clang-tidy/tool/clang-tidy-diff.py ${LLVM_SYSROOT}/bin/clang-tidy-diff.py
-
 RUN ln -s ${LLVM_SYSROOT}/bin/clang-${LLVM_VERSION_MAJOR} ${LLVM_SYSROOT}/bin/clang && \
     ln -s ${LLVM_SYSROOT}/bin/clang ${LLVM_SYSROOT}/bin/clang++
-
-ENV PATH=${LLVM_SYSROOT}/bin:${PATH}
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -86,9 +65,51 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+ENV CC=${LLVM_SYSROOT}/bin/clang
+ENV CXX=${LLVM_SYSROOT}/bin/clang++
+
+
+FROM base AS ci-container-code-format
+ARG LLVM_VERSION
+
+COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-format \
+                            /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/git-clang-format \
+                            ${LLVM_SYSROOT}/bin/
+
+
+# Install dependencies for 'pr-code-format.yml' job
+COPY llvm/utils/git/requirements_formatting.txt requirements_formatting.txt
+RUN pip install --require-hashes -r requirements_formatting.txt --break-system-packages && \
+    rm requirements_formatting.txt
+USER gha
+WORKDIR /home/gha
+
+
+FROM ci-container-build-tools AS ci-container-code-lint
+ARG LLVM_VERSION
+ARG LLVM_VERSION_MAJOR
+
+COPY --from=llvm-downloader /llvm-extract/LLVM-${LLVM_VERSION}-Linux-X64/bin/clang-tidy \
+                            ${LLVM_SYSROOT}/bin/
+COPY clang-tools-extra/clang-tidy/tool/clang-tidy-diff.py ${LLVM_SYSROOT}/bin/clang-tidy-diff.py
+
 # Install dependencies for 'pr-code-lint.yml' job
 COPY llvm/utils/git/requirements_linting.txt requirements_linting.txt
-RUN pip install -r requirements_linting.txt --break-system-packages && \
+RUN pip install --require-hashes -r requirements_linting.txt --break-system-packages && \
     rm requirements_linting.txt
 USER gha
 WORKDIR /home/gha
+
+
+FROM ci-container-build-tools as ci-container-abi-tests
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    abi-compliance-checker \
+    abi-dumper \
+    autoconf \
+    parallel \
+    pkg-config \
+    universal-ctags && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
