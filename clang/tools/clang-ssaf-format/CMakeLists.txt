@@ -1,10 +1,16 @@
 set(LLVM_LINK_COMPONENTS
   Option
   Support
+  TargetParser
   )
+
+if(CLANG_PLUGIN_SUPPORT)
+  set(support_plugins SUPPORT_PLUGINS)
+endif()
 
 add_clang_tool(clang-ssaf-format
   SSAFFormat.cpp
+  ${support_plugins}
   )
 
 clang_target_link_libraries(clang-ssaf-format
@@ -12,6 +18,7 @@ clang_target_link_libraries(clang-ssaf-format
   clangBasic
   clangScalableStaticAnalysisFrameworkAnalyses
   clangScalableStaticAnalysisFrameworkCore
+  clangScalableStaticAnalysisFrameworkSourceTransformation
   clangScalableStaticAnalysisFrameworkTool
   )
 
